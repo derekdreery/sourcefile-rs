@@ -5,9 +5,18 @@ use std::fs;
 use std::io::{self, BufRead};
 use std::path::Path;
 
-#[derive(Default)]
+macro_rules! check_error {
+   ($res:expr, $this:expr) => {{
+        let out = $res;
+        if out.is_err() {
+            $this.error = true;
+        }
+        out
+   }};
+}
+
 /// A concatenated string of files, with sourcemap information.
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Debug, Default, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct SourceFile {
     /// The full contents of all the files
     pub contents: String,
@@ -17,29 +26,37 @@ pub struct SourceFile {
     file_lines: Vec<usize>,
     /// The length of each line in all source files
     line_lengths: Vec<usize>,
+    /// Keep track of whether the internal state is inconsistent.
+    error: bool,
 }
 
 impl SourceFile {
+
+    /// Create a new empty sourcefile. Equivalent to `Default::default`.
+    pub fn new() -> Self {
+        Default::default()
+    }
+
     /// Concatenate a file to the end of `contents`, and record info needed to resolve spans.
     ///
     /// If the last line doesn't end with a newline character, it will still be a 'line' for the
     /// purposes of this calcuation.
     ///
     /// Consumes `self` because the structure would be inconsistent after an error.
-    pub fn add_file(mut self, filename: impl AsRef<Path>) -> Result<Self, io::Error> {
+    pub fn add_file(&mut self, filename: impl AsRef<Path>) -> io::Result<()> {
         let filename = filename.as_ref();
-        let mut file = io::BufReader::new(fs::File::open(filename)?);
+        let mut file = io::BufReader::new(check_error!(fs::File::open(filename), self)?);
 
         // We should skip this file if it is completely empty.
-        let line_len = file.read_line(&mut self.contents)?;
+        let line_len = check_error!(file.read_line(&mut self.contents), self)?;
         if line_len == 0 {
-            return Ok(self);
+            return Ok(());
         }
         self.line_lengths.push(line_len);
 
         let mut num_lines = 1; // We already got one above.
         loop {
-            let line_len = file.read_line(&mut self.contents)?;
+            let line_len = check_error!(file.read_line(&mut self.contents), self)?;
             if line_len == 0 { //EOF
                 break;
             }
@@ -51,7 +68,7 @@ impl SourceFile {
         self.file_names.push(format!("{}", filename.display()));
         // Record the number of lines
         self.file_lines.push(num_lines);
-        Ok(self)
+        Ok(())
     }
 
     /// Get the file, line, and col position of a byte offset.
@@ -60,6 +77,9 @@ impl SourceFile {
     ///
     /// This function will panic if `offset` is not on a character boundary.
     pub fn resolve_offset<'a>(&'a self, offset: usize) -> Option<Position<'a>> {
+        if self.error {
+            panic!("there was an error adding a file to this sourcefile")
+        }
         // If there isn't a single line, always return None.
         let mut line_acc = *self.line_lengths.get(0)?;
         let mut line_idx = 0;
@@ -88,6 +108,9 @@ impl SourceFile {
     // TODO this could be more efficient by using the fact that end is after (and probably near to)
     // start.
     pub fn resolve_offset_span<'a>(&'a self, start: usize, end: usize) -> Option<Span<'a>> {
+        if self.error {
+            panic!("there was an error adding a file to this sourcefile")
+        }
         if end < start {
             return None;
         }
@@ -175,7 +198,7 @@ mod tests {
         for contents in files {
             let mut file = NamedTempFile::new().unwrap();
             write!(file, "{}", contents.as_ref()).unwrap();
-            sourcefile = sourcefile.add_file(file.path()).unwrap();
+            sourcefile.add_file(file.path()).unwrap();
             file_handles.push(file);
         }
 

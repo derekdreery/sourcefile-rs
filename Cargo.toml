@@ -2,7 +2,7 @@
 name = "sourcefile"
 description = """Retain mapping information when concatenating source files, to make error 
 messages more useful"""
-version = "0.1.4"
+version = "0.2.0"
 authors = ["Richard Dodd <richard.o.dodd@gmail.com>"]
 keywords = ["sourcemap", "source", "map", "file", "location"]
 categories = ["text-processing", "parsing", "filesystem", "development-tools::debugging",
